@@ -1,57 +1,75 @@
 package com.kjawank.edificio.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "meses_facturacion")
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
 public class MesFacturacion {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 20)
-    private String periodo;             // "2026-04" (año-mes, para ordenar)
+    @Column(unique = true, nullable = false)
+    private String periodo;
 
-    @Column(nullable = false, length = 30)
-    private String nombreMes;           // "Abril 2026" (para mostrar)
+    private String nombreMes;
 
-    // Recibo SEDAPAL
-    @Column(nullable = false)
     private Double sedapalM3;
-    @Column(nullable = false)
     private Double sedapalImporte;
-
-    // Recibo luz (pisos 5-6)
-    @Column(nullable = false)
     private Double luzKwh;
-    @Column(nullable = false)
     private Double luzImporte;
-
-    // Calculados automáticamente
     private Double luzCostoPorKwh;
-    private Double areaComun;           // fijo S/22, dividido entre 8
+    private Double areaComun;
     private Double areaComunPorDpto;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private EstadoMes estado;           // ABIERTO, CERRADO
+    private EstadoMes estado;
 
     private LocalDate fechaCierre;
-    private LocalDateTime creadoEn;
-    private LocalDateTime actualizadoEn;
 
-    @PrePersist
-    protected void onCreate() { creadoEn = LocalDateTime.now(); actualizadoEn = LocalDateTime.now(); }
-    @PreUpdate
-    protected void onUpdate() { actualizadoEn = LocalDateTime.now(); }
+    public enum EstadoMes {
+        ABIERTO, CERRADO
+    }
 
-    public enum EstadoMes { ABIERTO, CERRADO }
+    // Constructores
+    public MesFacturacion() {}
+
+    // Getters y Setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
+    public String getPeriodo() { return periodo; }
+    public void setPeriodo(String periodo) { this.periodo = periodo; }
+
+    public String getNombreMes() { return nombreMes; }
+    public void setNombreMes(String nombreMes) { this.nombreMes = nombreMes; }
+
+    public Double getSedapalM3() { return sedapalM3; }
+    public void setSedapalM3(Double sedapalM3) { this.sedapalM3 = sedapalM3; }
+
+    public Double getSedapalImporte() { return sedapalImporte; }
+    public void setSedapalImporte(Double sedapalImporte) { this.sedapalImporte = sedapalImporte; }
+
+    public Double getLuzKwh() { return luzKwh; }
+    public void setLuzKwh(Double luzKwh) { this.luzKwh = luzKwh; }
+
+    public Double getLuzImporte() { return luzImporte; }
+    public void setLuzImporte(Double luzImporte) { this.luzImporte = luzImporte; }
+
+    public Double getLuzCostoPorKwh() { return luzCostoPorKwh; }
+    public void setLuzCostoPorKwh(Double luzCostoPorKwh) { this.luzCostoPorKwh = luzCostoPorKwh; }
+
+    public Double getAreaComun() { return areaComun; }
+    public void setAreaComun(Double areaComun) { this.areaComun = areaComun; }
+
+    public Double getAreaComunPorDpto() { return areaComunPorDpto; }
+    public void setAreaComunPorDpto(Double areaComunPorDpto) { this.areaComunPorDpto = areaComunPorDpto; }
+
+    public EstadoMes getEstado() { return estado; }
+    public void setEstado(EstadoMes estado) { this.estado = estado; }
+
+    public LocalDate getFechaCierre() { return fechaCierre; }
+    public void setFechaCierre(LocalDate fechaCierre) { this.fechaCierre = fechaCierre; }
 }

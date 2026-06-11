@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { useAuth } from '../hooks/useAuth'
+import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/ToastContainer'
 import { getMesActual } from '../services/api'
 import StatsCard from '../components/StatsCard'
@@ -61,7 +61,8 @@ export default function DashboardPage() {
     { title: 'Periodo', value: data?.periodo || '-', subtitle: data?.nombreMes || '' },
     { title: 'Total Agua', value: `S/ ${(data?.totalRecaudadoAgua || 0).toFixed(2)}`, subtitle: `${data?.sedapalM3 || 0} m³` },
     { title: 'Total Luz', value: `S/ ${(data?.totalRecaudadoLuz || 0).toFixed(2)}`, subtitle: `${data?.luzKwh || 0} kWh` },
-    { title: 'Total General', value: `S/ ${(data?.totalGeneral || 0).toFixed(2)}`, subtitle: `Área común: S/ ${(data?.areaComunPorDpto || 0).toFixed(2)}` },
+    //{ title: 'Total General', value: `S/ ${(data?.totalGeneral || 0).toFixed(2)}`, subtitle: `Área común: S/ ${(data?.areaComunPorDpto || 0).toFixed(2)}` },
+    { title: 'Total General', value: `S/ ${(data?.totalGeneral || 0).toFixed(2)}`, subtitle: '' },
   ]
 
   return (

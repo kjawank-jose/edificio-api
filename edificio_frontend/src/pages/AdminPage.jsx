@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { useAuth } from '../hooks/useAuth'
+import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/ToastContainer'
 import { getDepartamentos, abrirMes, ingresarDatos, cerrarMes } from '../services/api'
 import AbrirMesModal from '../components/AbrirMesModal'

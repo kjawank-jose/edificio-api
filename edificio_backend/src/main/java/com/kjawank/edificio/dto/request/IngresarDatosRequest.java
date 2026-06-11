@@ -1,41 +1,38 @@
 package com.kjawank.edificio.dto.request;
 
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.NotNull;  // ✅ Cambiado de javax a jakarta
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.util.Map;
 
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class IngresarDatosRequest {
 
-    @NotBlank
+    @NotNull
     private String periodo;
 
-    // Recibo SEDAPAL
     @NotNull
-    @Positive
     private Double sedapalM3;
 
     @NotNull
-    @Positive
     private Double sedapalImporte;
 
-    // Recibo Luz
     @NotNull
-    @Positive
     private Double luzKwh;
 
     @NotNull
-    @Positive
     private Double luzImporte;
 
-    // Lecturas de agua por departamento
-    @NotNull
+
     private Map<String, Double> lecturasAgua;
 
-    // Lecturas de luz por departamento
-    @NotNull
-    private Map<String, Double> lecturasLuz;
+    private Map<String, Double> lecturasLuz;  // Solo para deptos con tieneLuz = true
+
+    private Map<String, Double> lecturasLavadero;  // Lecturas de lavaderos externos
 }

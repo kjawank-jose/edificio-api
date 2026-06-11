@@ -18,6 +18,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -37,7 +39,6 @@ public class FacturacionService {
     @Value("${app.edificio.total-departamentos:8}")
     private Integer totalDepartamentos;
 
-    // ── Obtener mes activo ────────────────────────────────────────────────────
     public ResumenMesResponse getMesActual() {
         MesFacturacion mes = mesRepo.findByEstado(EstadoMes.ABIERTO)
                 .orElseThrow(() -> new RuntimeException("No hay un mes activo. Abre un nuevo mes primero."));
@@ -45,7 +46,6 @@ public class FacturacionService {
         return buildResumen(mes, lecturas);
     }
 
-    // ── Abrir nuevo mes ───────────────────────────────────────────────────────
     @Transactional
     public ResumenMesResponse abrirMes(String periodo, String nombreMes) {
         if (mesRepo.existsByPeriodo(periodo)) {
@@ -68,7 +68,7 @@ public class FacturacionService {
         return buildResumen(mes, List.of());
     }
 
-    // ── Ingresar datos del mes (recibos + lecturas) ───────────────────────────
+    @Transactional
     @Transactional
     public ResumenMesResponse ingresarDatos(IngresarDatosRequest req) {
         MesFacturacion mes = mesRepo.findByPeriodo(req.getPeriodo())
@@ -78,7 +78,6 @@ public class FacturacionService {
             throw new RuntimeException("El mes " + mes.getNombreMes() + " ya está cerrado.");
         }
 
-        // Actualizar datos del recibo en el mes
         mes.setSedapalM3(req.getSedapalM3());
         mes.setSedapalImporte(req.getSedapalImporte());
         mes.setLuzKwh(req.getLuzKwh());
@@ -88,28 +87,34 @@ public class FacturacionService {
         mes.setAreaComunPorDpto(round(areaComunLuz / totalDepartamentos));
         mesRepo.save(mes);
 
-        // Obtener todos los departamentos
         List<Departamento> dptos = dptoRepo.findAll();
 
-        // ── Paso 1: calcular consumo agua de cada dpto ────────────────────────
-        // Consumo = lectura actual - última lectura registrada en la entidad Departamento
+        // ============================================================
+        // PASO 1: Calcular el consumo total de agua (incluyendo lavaderos)
+        // ============================================================
         double totalConsumoAguaInterno = 0.0;
         for (Departamento d : dptos) {
-            Double lectActual = req.getLecturasAgua().get(d.getCodigo());
-            if (lectActual == null) {
-                throw new RuntimeException("Falta lectura de agua para el departamento: " + d.getCodigo());
+            double consumoDepto = round(req.getLecturasAgua().get(d.getCodigo()) - d.getUltimaLecturaAgua());
+            double consumoTotalPorDpto = consumoDepto;
+
+            // Consumo del lavadero (solo si tiene y si se envió la lectura)
+            if (d.getTieneLavadero() != null && d.getTieneLavadero()
+                    && req.getLecturasLavadero() != null
+                    && req.getLecturasLavadero().containsKey(d.getCodigo())) {
+                Double lectLavaderoActual = req.getLecturasLavadero().get(d.getCodigo());
+                double consumoLavadero = round(lectLavaderoActual - d.getUltimaLecturaLavadero());
+                consumoTotalPorDpto += consumoLavadero;
             }
-            double consumo = round(lectActual - d.getUltimaLecturaAgua());
-            if (consumo < 0) {
-                throw new RuntimeException("Lectura de agua inválida para " + d.getCodigo() +
-                        ": la lectura actual (" + lectActual + ") es menor a la anterior (" + d.getUltimaLecturaAgua() + ")");
-            }
-            totalConsumoAguaInterno += consumo;
+
+            totalConsumoAguaInterno += consumoTotalPorDpto;
         }
 
-        // ── Paso 2: calcular consumo luz pisos 5-6 ────────────────────────────
+        // ============================================================
+        // PASO 2: Calcular el consumo total de luz
+        // ============================================================
         List<Departamento> dptosConLuz = dptos.stream()
-                .filter(Departamento::getTieneLuz).toList();
+                .filter(d -> d.getTieneLuz() != null && d.getTieneLuz())
+                .collect(Collectors.toList());
 
         double totalConsumoLuzInterno = 0.0;
         for (Departamento d : dptosConLuz) {
@@ -119,46 +124,83 @@ public class FacturacionService {
             }
             double consumo = round(lectActual - d.getUltimaLecturaLuz());
             if (consumo < 0) {
-                throw new RuntimeException("Lectura de luz inválida para " + d.getCodigo());
+                throw new RuntimeException("Lectura de luz invalida para " + d.getCodigo());
             }
             totalConsumoLuzInterno += consumo;
         }
 
-        // Monto de luz distribuible (total - área común fija)
         double luzDistribuible = req.getLuzImporte() - areaComunLuz;
+        double costoAguaPorM3 = req.getSedapalImporte() / req.getSedapalM3();
 
-        // ── Paso 3: calcular y guardar cobro por departamento ─────────────────
+        // ============================================================
+        // PASO 3: Procesar cada departamento
+        // ============================================================
         for (Departamento d : dptos) {
-            double lectAgua   = req.getLecturasAgua().get(d.getCodigo());
-            double consumoAgua = round(lectAgua - d.getUltimaLecturaAgua());
-            double pctAgua     = totalConsumoAguaInterno > 0
-                    ? round(consumoAgua / totalConsumoAguaInterno) : 0.0;
-            double pagoAgua    = round(pctAgua * req.getSedapalImporte());
+            // ---------- Agua ----------
+            double lectAguaActual = req.getLecturasAgua().get(d.getCodigo());
+            double consumoDepto = round(lectAguaActual - d.getUltimaLecturaAgua());
+            double consumoTotalAguaBruto = consumoDepto;
+            // Consumo del lavadero (manejo seguro de nulls)
+            Double consumoLavadero = null;
+            Double lectLavaderoActual = null;
 
-            double lectLuz = 0, consumoLuz = 0, pctLuz = 0, pagoLuz = 0;
-            if (d.getTieneLuz()) {
-                lectLuz     = req.getLecturasLuz().get(d.getCodigo());
-                consumoLuz  = round(lectLuz - d.getUltimaLecturaLuz());
-                pctLuz      = totalConsumoLuzInterno > 0
-                        ? round(consumoLuz / totalConsumoLuzInterno) : 0.0;
-                pagoLuz     = round(pctLuz * luzDistribuible);
+            if (d.getTieneLavadero() != null && d.getTieneLavadero()) {
+                // Verificar que el mapa de lecturas de lavadero no sea null
+                if (req.getLecturasLavadero() != null) {
+                    lectLavaderoActual = req.getLecturasLavadero().get(d.getCodigo());
+                    if (lectLavaderoActual != null) {
+                        consumoLavadero = round(lectLavaderoActual - d.getUltimaLecturaLavadero());
+                        consumoTotalAguaBruto += consumoLavadero;
+                    } else {
+                        log.warn("No se encontró lectura de lavadero para el depto: {}", d.getCodigo());
+                    }
+                } else {
+                    log.warn("El mapa de lecturas de lavadero es null para el depto: {}", d.getCodigo());
+                }
             }
 
-            double pagoAreaComun = round(areaComunLuz / totalDepartamentos);
-            double pagoTotal     = round(pagoAgua + pagoLuz + pagoAreaComun);
+            double pctAgua = totalConsumoAguaInterno > 0
+                    ? round(consumoTotalAguaBruto / totalConsumoAguaInterno)
+                    : 0.0;
+            double m3Ajustado = round(pctAgua * req.getSedapalM3());
+            double pagoAgua = round(m3Ajustado * costoAguaPorM3);
 
-            // Buscar o crear la lectura de este dpto en este mes
+            // ---------- Luz ----------
+            double consumoLuz = 0.0;
+            double pctLuz = 0.0;
+            double pagoLuz = 0.0;
+            Double lectLuzActual = null;
+
+            if (d.getTieneLuz() != null && d.getTieneLuz()) {
+                lectLuzActual = req.getLecturasLuz().get(d.getCodigo());
+                consumoLuz = round(lectLuzActual - d.getUltimaLecturaLuz());
+                pctLuz = totalConsumoLuzInterno > 0
+                        ? round(consumoLuz / totalConsumoLuzInterno)
+                        : 0.0;
+                pagoLuz = round(pctLuz * luzDistribuible);
+            }
+
+            // ---------- Totales ----------
+            double pagoAreaComun = round(areaComunLuz / totalDepartamentos);
+            double pagoTotal = round(pagoAgua + pagoLuz + pagoAreaComun);
+
+            // ---------- Guardar ----------
             LecturaConsumo lectura = lecturaRepo
                     .findByMesAndDepartamento(mes, d)
                     .orElse(LecturaConsumo.builder().mes(mes).departamento(d).build());
 
-            lectura.setLecturaAguaActual(lectAgua);
-            lectura.setConsumoAguaM3(consumoAgua);
+            lectura.setLecturaAguaActual(lectAguaActual);
+            lectura.setConsumoAguaM3(consumoDepto);
             lectura.setPorcentajeAgua(pctAgua);
             lectura.setPagoAgua(pagoAgua);
 
-            if (d.getTieneLuz()) {
-                lectura.setLecturaLuzActual(lectLuz);
+            if (consumoLavadero != null) {
+                lectura.setLecturaLavaderoActual(lectLavaderoActual);
+                lectura.setConsumoLavaderoM3(consumoLavadero);
+            }
+
+            if (d.getTieneLuz() != null && d.getTieneLuz()) {
+                lectura.setLecturaLuzActual(lectLuzActual);
                 lectura.setConsumoLuzKwh(consumoLuz);
                 lectura.setPorcentajeLuz(pctLuz);
                 lectura.setPagoLuz(pagoLuz);
@@ -166,6 +208,7 @@ public class FacturacionService {
 
             lectura.setPagoAreaComun(pagoAreaComun);
             lectura.setPagoTotal(pagoTotal);
+
             lecturaRepo.save(lectura);
         }
 
@@ -173,7 +216,6 @@ public class FacturacionService {
         return buildResumen(mes, lecturaRepo.findByMes(mes));
     }
 
-    // ── Cerrar mes ────────────────────────────────────────────────────────────
     @Transactional
     public ResumenMesResponse cerrarMes(CerrarMesRequest req) {
         MesFacturacion mes = mesRepo.findByPeriodo(req.getPeriodoActual())
@@ -188,29 +230,35 @@ public class FacturacionService {
             throw new RuntimeException("No se pueden cerrar el mes sin lecturas ingresadas.");
         }
 
-        // Actualizar última lectura de cada departamento
         for (LecturaConsumo l : lecturas) {
             Departamento d = l.getDepartamento();
+
+            // Actualizar última lectura de agua
             d.setUltimaLecturaAgua(l.getLecturaAguaActual());
-            if (d.getTieneLuz() && l.getLecturaLuzActual() != null) {
+
+            // Actualizar última lectura de lavadero (si tiene)
+            if (d.getTieneLavadero() != null && d.getTieneLavadero() && l.getLecturaLavaderoActual() != null) {
+                d.setUltimaLecturaLavadero(l.getLecturaLavaderoActual());
+            }
+
+            // Actualizar última lectura de luz (si tiene)
+            if (d.getTieneLuz() != null && d.getTieneLuz() && l.getLecturaLuzActual() != null) {
                 d.setUltimaLecturaLuz(l.getLecturaLuzActual());
             }
+
             dptoRepo.save(d);
         }
 
-        // Cerrar mes
         mes.setEstado(EstadoMes.CERRADO);
         mes.setFechaCierre(LocalDate.now());
         mesRepo.save(mes);
 
-        // Abrir el próximo mes automáticamente
         abrirMes(req.getProximoPeriodo(), req.getProximoNombre());
 
-        log.info("Mes cerrado: {}. Próximo mes abierto: {}", mes.getNombreMes(), req.getProximoNombre());
+        log.info("Mes cerrado: {}. Proximo mes abierto: {}", mes.getNombreMes(), req.getProximoNombre());
         return buildResumen(mes, lecturas);
     }
 
-    // ── Historial de meses cerrados ───────────────────────────────────────────
     public List<HistorialMesResponse> getHistorial() {
         return mesRepo.findAllByOrderByPeriodoDesc().stream()
                 .map(m -> HistorialMesResponse.builder()
@@ -225,14 +273,12 @@ public class FacturacionService {
                 .collect(Collectors.toList());
     }
 
-    // ── Detalle de un mes específico ──────────────────────────────────────────
     public ResumenMesResponse getMesByPeriodo(String periodo) {
         MesFacturacion mes = mesRepo.findByPeriodo(periodo)
                 .orElseThrow(() -> new RuntimeException("Periodo no encontrado: " + periodo));
         return buildResumen(mes, lecturaRepo.findByMes(mes));
     }
 
-    // ── Cobros de un departamento específico ──────────────────────────────────
     public List<CobroResponse> getHistorialDepartamento(String codigoDpto) {
         Departamento d = dptoRepo.findByCodigo(codigoDpto)
                 .orElseThrow(() -> new RuntimeException("Departamento no encontrado: " + codigoDpto));
@@ -241,15 +287,14 @@ public class FacturacionService {
                 .collect(Collectors.toList());
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
     private ResumenMesResponse buildResumen(MesFacturacion mes, List<LecturaConsumo> lecturas) {
         List<CobroResponse> cobros = lecturas.stream()
                 .map(l -> buildCobro(l, mes))
                 .collect(Collectors.toList());
 
         double totalAgua = cobros.stream().mapToDouble(c -> c.getPagoAgua() != null ? c.getPagoAgua() : 0).sum();
-        double totalLuz  = cobros.stream().mapToDouble(c -> c.getPagoLuz()  != null ? c.getPagoLuz()  : 0).sum();
-        double totalGen  = cobros.stream().mapToDouble(c -> c.getPagoTotal() != null ? c.getPagoTotal() : 0).sum();
+        double totalLuz = cobros.stream().mapToDouble(c -> c.getPagoLuz() != null ? c.getPagoLuz() : 0).sum();
+        double totalGen = cobros.stream().mapToDouble(c -> c.getPagoTotal() != null ? c.getPagoTotal() : 0).sum();
 
         return ResumenMesResponse.builder()
                 .periodo(mes.getPeriodo())
@@ -273,6 +318,7 @@ public class FacturacionService {
     private CobroResponse buildCobro(LecturaConsumo l, MesFacturacion mes) {
         Departamento d = l.getDepartamento();
         String msg = buildMensajeWhatsapp(l, mes);
+
         return CobroResponse.builder()
                 .codigoDpto(d.getCodigo())
                 .nombreDpto(d.getNombre())
@@ -295,24 +341,35 @@ public class FacturacionService {
     private String buildMensajeWhatsapp(LecturaConsumo l, MesFacturacion mes) {
         Departamento d = l.getDepartamento();
         StringBuilder sb = new StringBuilder();
-        sb.append("Buenos días, el monto de *").append(mes.getNombreMes()).append("* es:\n");
-        sb.append(String.format("🔵 *Agua:* S/ %.2f\n", l.getPagoAgua()));
-        if (d.getTieneLuz() && l.getPagoLuz() != null) {
-            sb.append(String.format("⚡ *Luz:* S/ %.2f\n", l.getPagoLuz()));
+        sb.append("Buenos dias, el monto de *").append(mes.getNombreMes()).append("* es:\n");
+        sb.append(String.format("*Agua:* S/ %.2f\n", l.getPagoAgua()));
+
+        // Mostrar consumo del lavadero si aplica
+        if (d.getTieneLavadero() != null && d.getTieneLavadero() && l.getConsumoLavaderoM3() != null) {
+            sb.append(String.format("  (incluye lavadero: %.2f m3)\n", l.getConsumoLavaderoM3()));
         }
-        sb.append(String.format("🏢 *Área común:* S/ %.2f\n", l.getPagoAreaComun()));
-        sb.append("─────────────────\n");
-        sb.append(String.format("💰 *TOTAL: S/ %.2f*\n", l.getPagoTotal()));
+
+        if (d.getTieneLuz() && l.getPagoLuz() != null) {
+            sb.append(String.format("*Luz:* S/ %.2f\n", l.getPagoLuz()));
+        }
+        sb.append(String.format("*Area comun:* S/ %.2f\n", l.getPagoAreaComun()));
+        sb.append("-----------------\n");
+        sb.append(String.format("*TOTAL: S/ %.2f*\n", l.getPagoTotal()));
         sb.append("\nConsumo: ");
-        sb.append(String.format("%.3f m³ agua", l.getConsumoAguaM3()));
+        sb.append(String.format("%.3f m3 agua", l.getConsumoAguaM3()));
+        if (d.getTieneLavadero() != null && d.getTieneLavadero() && l.getConsumoLavaderoM3() != null) {
+            sb.append(String.format(" + %.3f m3 lavadero", l.getConsumoLavaderoM3()));
+        }
         if (d.getTieneLuz() && l.getConsumoLuzKwh() != null) {
             sb.append(String.format(" | %.2f kWh luz", l.getConsumoLuzKwh()));
         }
-        sb.append("\nGracias 🙏");
+        sb.append("\nGracias");
         return sb.toString();
     }
 
     private double round(double value) {
-        return Math.round(value * 100.0) / 100.0;
+        return new BigDecimal(value)
+                .setScale(2, RoundingMode.HALF_UP)
+                .doubleValue();
     }
 }

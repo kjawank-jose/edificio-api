@@ -17,44 +17,51 @@ export default function CobrosTable({ cobros, onWhatsApp }) {
           <th>Depto</th>
           <th>Propietario</th>
           <th>Agua (S/)</th>
-          <th>Luz (S/)</th>
-          <th>Área Común</th>
+          <th>Luz + Área Común (S/)</th>  {/* ← Nombre actualizado */}
           <th>Total</th>
           <th>Acciones</th>
         </tr>
       </thead>
       <tbody>
-        {cobros.map(c => (
-          <tr key={c.codigoDpto}>
-            <td>
-              <strong>{c.codigoDpto}</strong>
-              <br />
-              <small style={{ color: 'var(--text-secondary)' }}>{c.nombreDpto}</small>
-            </td>
-            <td>{c.propietario}</td>
-            <td>
-              S/ {(c.pagoAgua || 0).toFixed(2)}
-              <br />
-              <small>{(c.consumoAguaM3 || 0).toFixed(3)} m³</small>
-            </td>
-            <td>
-              {c.tieneLuz ? (
-                <>
-                  S/ {(c.pagoLuz || 0).toFixed(2)}
-                  <br />
-                  <small>{(c.consumoLuzKwh || 0).toFixed(2)} kWh</small>
-                </>
-              ) : '-'}
-            </td>
-            <td>S/ {(c.pagoAreaComun || 0).toFixed(2)}</td>
-            <td><strong>S/ {(c.pagoTotal || 0).toFixed(2)}</strong></td>
-            <td>
-              <button className="btn btn-sm btn-success" onClick={() => onWhatsApp(c)}>
-                📱 WhatsApp
-              </button>
-            </td>
-          </tr>
-        ))}
+        {cobros.map(c => {
+          // Calcular columna combinada: Luz + Área Común
+          const pagoLuzEscaleras = c.tieneLuz
+            ? ((c.pagoLuz || 0) + (c.pagoAreaComun || 0))
+            : (c.pagoAreaComun || 0);
+
+          return (
+            <tr key={c.codigoDpto}>
+              <td>
+                <strong>{c.codigoDpto}</strong>
+                <br />
+                <small style={{ color: 'var(--text-secondary)' }}>{c.nombreDpto}</small>
+              </td>
+              <td>{c.propietario}</td>
+              <td>
+                S/ {(c.pagoAgua || 0).toFixed(2)}
+                <br />
+                <small>{(c.consumoAguaM3 || 0).toFixed(3)} m³</small>
+              </td>
+              <td>
+                {/* ← Columna combinada: muestra Luz+ÁreaComún o solo ÁreaComún */}
+                S/ {pagoLuzEscaleras.toFixed(2)}
+                <br />
+                <small>
+                  {c.tieneLuz
+                    ? `${(c.consumoLuzKwh || 0).toFixed(2)} kWh + área común`
+                    : 'Solo área común'
+                  }
+                </small>
+              </td>
+              <td><strong>S/ {(c.pagoTotal || 0).toFixed(2)}</strong></td>
+              <td>
+                <button className="btn btn-sm btn-success" onClick={() => onWhatsApp(c)}>
+                  📱 WhatsApp
+                </button>
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   )

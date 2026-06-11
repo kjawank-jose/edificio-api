@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useLocation, useNavigate, Outlet } from 'react-router-dom'
-import { useAuth } from '../hooks/useAuth'
+import { useAuth } from '../context/AuthContext'
 
 export default function Layout() {
   const { user, logout } = useAuth()
